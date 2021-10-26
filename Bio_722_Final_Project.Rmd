@@ -1,0 +1,791 @@
+---
+title: "Rajat_Bhargava_Bio_722_Final_Project"
+author: "Rajat Bhargava"
+date: "25/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{css, echo=FALSE}
+pre, code {white-space:pre !important; overflow-x:auto}
+```
+
+###introduction: 
+
+Sexual conflict takes place when the reproductive interests of males and females diverge. Unless strict genetic monogamy is maintained, the correlation between the fitness of an individual and of their mating partners is lower than unity. This leads to adaptations that are detrimental for one sex but beneficial for the other (Rice et al. 2006). The most common presentation of sexual conflict is males’ heightened motivation for sexual activity and dampened ability to inhibit sexual impulses. This is seen by males’ persistent sexual pursuit of reluctant females (Thompson 2009). Forced copulation is an extreme example of sexual conflict, and involves a male forcefully inseminating a female despite there being an absence of receptivity. It’s important on an evolutionary scale as it leads to the adaptation of male and female traits that are different than those originating from other presentations of sexual selection (Markow 2000). *Drosophila melanogaster* (fruit flies) are a good model to study forced copulation, as males have been shown to be successful 20% of the time in copulating with teneral females (females that are post-eclosion) (Dukas et al 2020).  Dukas et al (2020) artificially selected for males with low or high forced copulation success, for the purpose of analyzing traits and trade-offs associated with forced copulation.  Based on findings by Baxter et al (2019), they decided to focus on two measures of sexual aggression in trying to assay forced copulation. One was low level aggression, measured at the time that males spent pursuing teneral females. The other was high level aggression, which was quantified as the time males spent trying to mount females. They also looked at the amount of time spent pursuing and mounting non-teneral conspecifics for both the high and low lines, whether males from the high lines were just as persistent in mating with receptive females as with unreceptive females, whether males from the high lines would also be as aggressive in defending an attractive resource from another mate, and a few other behaviours/traits. The artificial selection protocol involved placing newly eclosed teneral female flies into the vials of individual males. 48 randomly selected male flies that did not mate were used to form a low forced copulation lineage, and 48 randomly selected female flies that did mate were used to form a high forced copulation lineage. Three low forced copulation and three high forced copulation lineages were generated over the course of three days. After 10 days from the last egg laying, newly eclosed flies were collected and one low and one high copulation line were tested per day for three days. Twenty generations of artificial selection took place, and then two generations of relaxed selection to remove parental effects ensued. In testing the evolved lineages for behaviours and characteristics mentioned before, they found that the high lines had twice as much forced copulation success after twenty generations as the low lines. Other key results include males from high forced copulation times spending more time mounting teneral females than males from low forced copulation lines, males of both lines showing similar levels of aggression, etc. Males were afterwards preserved at -80 degrees Celsius and had DNA extracted from them using a modified extraction protocol from Sarah Marzec of the Dworkin lab. The whole genome sequencing output from this DNA is what I would like to look at to identifying SNPS of interest that vary between the high and low lines. 
+
+Pool-seq, or the pooling of individuals for WGS enables the sampling of many chromosomes per base pair, and it thus provides accurate estimates of the site frequency spectrum at a low individual cost (Kofler et al, 2016). Applications that benefit from Pool-seq include time-series analyses on replicated evolving lab populations or natural populations in changing environments, applications that link environmental variation to the genetic variation of locally adapted populations, etc. (Schotterer et al, 2014). A drawback to pool-seq is that not all genome analysis software are able to properly deal with the high number of genomes per sample. GATK is an exception to this (Huang et al 2015). Along with GATK, I’ll be using CRISP, PoPoolation and Popoolation 2. PoPoolation makes inferences about genomic data within a pooled genome sample (Kofler et al. 2011a), Popoolation2 compares different pools together (Kofler et al. 2011b). CRISP is a variant caller geared towards pooled samples (Bansal et al. 2010).  
+
+Using the DNA sequencing pipeline used in the Dworkin lab by other students with slight modifications, some of which were based on Ben Evan’s tutorial during Bio 722 lectures, I intend to identify polymorphic differences between high and low forced copulation lines from the forced copulation experiments in the Dukas lab. These will be used later on for further analysis. 
+
+##METHODS:
+
+###1. Populations.
+
+All natural population capture experiments, as well as artificial selection experiments were performed in the Dukas lab.  Al experiments involved collecting several hundred female fruit flies in various locations in and around Hamilton, Ontario in summer 2018, and placing them in individual food vials. Male offspring were then inspected for and retained. There were three replicates for the articifial selection experiment (labelled in the pipeline's data as A, B, and C), and 4 ancestral, natural populations, (labelled in the pipeline's data as Anc1, Anc2, Anc3, and Anc4).
+###2. Initial Quality Control
+
+The files were found on McMaster/the Golding lab's server on Andrew Scott (from the Dukas lab)'s scratch space. The first thing that was done involved doing a md5sum check to make sure transferred files were not corrupt.
+
+
+```{r}
+md5sum - c md5.txt 
+```
+FLAGS: -c flag reports if the checksums match the contents of files.
+
+After it was determined that the files were transferred successfully, the analysis could begin.
+
+FastQC was used to check the quality of the sample files. FASTQC summarizes read quality by position, tells users about the presence of adapters in sequences, and many other useful details regarding raw sequence data. (Brown et al, 2017).
+
+The following script was run using the directory "FC_WGS_Raw_Data/read_files" to perform the quality check using FastQC:
+```{r}
+fastqc -o /scratch/rajat/fc_WGS/fastqc_dir /scratch/rajat/FC_WGS_Raw_Data/read_files/
+
+```
+FLAGS: -o indicates the output directory.
+
+In fastqc_dir, the following command was run to create a directory with multiqc information: 
+
+```{r}
+multiqc -o ./multiqc_data ./*
+```
+
+The output files were examined on my local computer (the files were transferred to my home directory first, and then scp-ed to my local drive), and it was determined that the reads were alright in terms of quality. There were a few low quality bases, and an over-representation of adapter sequences, which makes sense given that the reads were yet to be trimmed. 
+
+```{r}
+scp -r rajat@info.mcmaster.ca:/home/rajat/fc_WGS/fastqc_dir/multiqc_data/  ~/desktop
+```
+FLAGS: -r copies everything in a directory recursively. 
+
+###3. Trimming of reads
+
+Trimmomatic was employed to remove adapter sequences from reads, and was called with the script below (adapted from Bolger et al, 2014).
+
+```{r}
+raw_dir=/scratch/rajat/fc_WGS/FC_WGS_Raw_Data/read_files/
+trim_dir=/scratch/rajat/fc_WGS/trimmed/
+
+files=(${raw_dir}/*_R1.fastq.gz)
+
+for file in ${files[@]}
+do
+        name=${file}
+        base=`basename ${name} _R1.fastq.gz`
+
+        java -jar /usr/local/trimmomatic/trimmomatic-0.36.jar PE -threads 12 \
+                ${raw_dir}/${base}_R1.fastq.gz ${raw_dir}/${base}_R2.fastq.gz \
+                ${trim_dir}/${base}_1_pe.fastq.gz ${trim_dir}/${base}_1_se.fastq.gz \
+                ${trim_dir}/${base}_2_pe.fastq.gz ${trim_dir}/${base}_2_se.fastq.gz \
+                ILLUMINACLIP:/scratch/rajat/fc_WGS/adapter_files/BBMap_adapters_2020.fa:2:30:10 LEADING:3 TRAILING:3 MAXINFO:20:0.5 MINLEN:36
+done
+
+```
+FLAGs: "-threads 5" = uses 5 threads. "-phred33" = Illumina sequencing. "trimlog" = path and name of log file. "ILLUMINACLIP" = adapter sequence file. "LEADING" = Removal at start of read, for low quality. "TRAILING" = Removal at end of read, for low quality. "MAXINFO" = balances read length and base quality to maximize information provided; intermediate values are selected). "MINLEN" = Smallest  window possible; smaller reads after trimming are discarded.
+
+ FastQC was again run on trimmed files, and the multiqc operation was then run as before. The generated files were pulled down to my local computer to make sure that trimming accomplished the task of removing adapter sequences and low-quality bases. The adapter sequences and low-quality bases were determined to have been removed successfully.
+ 
+ ###4. Mapping
+ 
+ First, the genome was downloaded. The most recent Drosophila genome at the time of pre-mapping was v6.39, and so I selected that. 
+ 
+```{r}
+curl -O ftp://ftp.flybase.net/genomes/Drosophila_melanogaster/http://ftp.flybase.net/genomes/Drosophila_melanogaster/dmel_r6.39_FB2021_02/fasta/dmel-all-chromosome-r6.39.fasta.gz
+```
+ 
+As per the insight of Li and Durbin (2010), I used BWA (Burrows-Wheeler Alignment) to map reads for this pipeline. First, I had to index the genome to make it usable by BWA.
+
+```{r}
+bwa index dmel-all-chromosome-r6.39.fasta.gz
+```
+Now the mapping of reads could commence. 
+```{r}
+
+
+project_name=fc_WGS
+project_dir=/scratch/rajat/fc_WGS
+
+#directory with reads trimmed using trimmomatic
+trim_dir=${project_dir}/trimmed
+
+#making BWA directory path
+bwa_path=/usr/local/bwa/0.7.8
+
+#making output directory for the outputs of mapping
+
+sam_dir=${project_dir}/sam_dir
+
+
+#this was the variable for the reference genome
+ref_genome=${index_dir}/dmel-all-chromosome-r6.39.fasta.gz
+
+cd ${bwa_path}
+
+#this lists all the files to be read (selects the left end from each paired end pair)
+files=(${trim_dir}/*_1_pe.fastq.gz)
+
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} _1_pe.fastq.gz`
+bwa mem -t 8 -M ${ref_genome} ${trim_dir}/${base}_1_pe.fastq.gz ${trim_dir}/${base}_2_pe.fastq.gz > ${sam_dir}/${base}_aligned_pe.SAM
+done
+
+
+
+
+```
+FLAGS: "-t 8"=uses 8 threads. -M=mark shorter reads. 
+
+###5. Merge reads
+
+For the purposes of increasing depth,each sample from these experiments was run twice. Samtools and the script below were used to merge pairs of reads.
+
+```{r}
+
+#!/bin/bash
+
+project_name=fc_WGS
+project_dir=/scratch/rajat/fc_WGS
+raw_dir=${project_dir}/FC_WGS_Raw_Data
+
+bwa_path=/usr/local/bwa/0.7.8
+
+sync=/usr/local/popoolation/mpileup2sync.jar
+
+index_dir=${project_dir}/index_dir
+ref_genome=${index_dir}/dmel-all-chromosome-r6.39.fasta.gz
+
+#each sample was run on 2 seperate runs, in lanes 001 and lanes 002
+
+
+sam_dir=${project_dir}/sam_dir
+
+#creating directory where the merged files will go
+merged=${project_dir}/merged
+
+files=(${sam_dir}/*_L001_aligned_pe.sam)
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} _L001_aligned_pe.sam`
+samtools merge ${merged}/${base}_merged_aligned_pe.sam ${samdir}/${base}_L002_aligned_pe.sam
+done
+
+
+```
+An error here was not adding the read groups to the files before they were merged, and this ought to be avoided in the future.I'll add read groups further down in the pipeline, but in the future it should be done earlier on.
+###6. Convert SAM to BAM files
+Next the SAM files were converted to their smaller counterparts, BAM files, using SAMtools (Li et al. 2009) . 
+
+```{r}
+#!/bin/bash
+
+#Specify input directory
+sam_dir=scratch/rajat/fc_WGS/merged
+
+#Specify output directory
+bam_dir=scratch/rajat/fc_WGS/bam_dir
+
+files=(${sam_dir}/*.SAM)
+
+for 
+file in ${files[@]} 
+do 
+name=${file} base=`basename ${name} .SAM`
+
+samtools view -b -q -@5 ${sam_dir}/${base}.SAM | samtools sort -o ${bam_dir}/${base}.bam 
+done 
+```
+FLAGS: "-b" = BAM file output. "-q" = filter for low quality reads( BQ<20 id the default). "-o" = output file name.
+
+Sorting of the files by position was the next step.
+
+```{r}
+
+
+
+#! /bin/bash
+
+#Specify input directory
+bam_dir=/scratch/rajat/fc_WGS/bam_dir
+
+#Specify output directory
+sorted_dir=/scratch/rajat/fc_WGS/sorted_dir
+
+
+files=(${bam_dir}/*.bam)
+
+for file in ${files[@]}
+do
+name=${file} base=`basename ${name} .bam`
+
+
+samtools sort -O BAM ${bam_dir}/${base}.bam -o ${sorted_dir}/${base}_sorted.bam
+done
+
+
+```
+
+
+Next, I checked the mapping of the reads. I first looked at the stats and flags linked to each read using the following scripts.
+
+First, the coverage at each base was calculated. 
+
+```{r}
+#!/bin/bash
+#
+#Specifying the input directory
+bam_dir=/scratch/rajat/fc_WGS/merge
+
+#specifying the output directory
+coverage=scratch/rajat/coverage
+
+files=(${bam_dir}/* _PE.bam)
+
+for file in ${files[@]} do name=${file} base=`basename ${name} .bam`
+samtools depth ${bam_dir}/{${base}_PE.bam > ${coverage}/${base}_PE.coverage
+done 
+```
+
+The resulting "total_coverage" file was 25 gb. It was subsetted so only its third column was presented, creating the file "total_coverage_column_3". This was still 5 gb and too large to work with on R on my local console, so it was worked with on the terminal itself. The following script was used to generate the depth histogram R script.
+
+```{r}
+#!/bin/bash
+
+#temp storage
+coverage=/scratch/rajat/fc_WGS/coverage
+
+#Rscripts dir
+Rscripts=/scratch/rajat/fc_WGS/Rscript_dir
+
+files=(${coverage}/*_coverage)
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} _coverage`
+Rscript ${Rscripts}/coverage_histogram.R ${base}_coverage ${base}
+done
+
+```
+```{r}
+##coverage_histogram.R
+## need next line to call arguments:
+args <- commandArgs(trailingOnly = TRUE)
+
+#read in the first argument which should be the file
+dat <- read.table(args[1])
+#the title should be the second argument (the base name)
+title <- args[2] 
+colnames(dat) <- c("chr","pos","depth")
+
+#make a histogram of the coverage for each file
+pdf(paste(title, ".pdf", sep="")) 
+hist(dat$depth, xlim=c(0,500), breaks=500) 
+dev.off() 
+```
+
+This file would run for a while and then randomly halt. Unfortunately, I wasn't able to generate the depth histogram plot due to this, and will need to revisit this to look for the presence of PCR duplicates or highly repetitive regions beyond the predicted average read depth of 100X, where the reads cannot be reliably mapped.
+
+My local computer did not have have enough power to manipulate
+###7. Indel realignment using GATK
+It is important to realign reads around these indel sites, to reduce errors in mapping. The GATK tool was used to accomplish this.
+
+Before mapping, read group information needed to be included for all of the files. As mentioned before,this is a step that should have been executed earlier in the pipeline.
+
+```{r}
+#! /bin/bash
+
+#Variable for project:
+project_dir=scratch/rajat/fc_WGS_merged
+
+#Path to Picard
+picdir=/usr/local/picard-tools/picard.jar
+
+
+files=(${project_dir}*.bam)
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} .bam`
+
+java -jar ${picdir} AddOrReplaceReadGroups I=${project_dir}/${base}.bam \
+  O=${project_dir}/${base}_RG.bam \
+  RGID=L001_L002 \
+  RGLB=library1 \
+  RGPL=illumina \
+  RGPU=None \
+  RGSM=${base}
+
+done
+```
+As per Li et al (2009), the files next needed to be indexed directly within their directory. 
+
+```{r}
+#!/bin/bash /
+
+files=(*_RG.bam)
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} _RG.bam` 
+samtools index ${base}_RG.bam &
+done
+```
+
+For all of the sample files, interval files also needed to be formed using GATK. This was also done within the same directory as the sample files. 
+```{r}
+#!/bin/bash/
+#Path to GATK
+gatk=/usr/local/gatk/GenomeAnalysisTK.jar
+
+files=(*_RG.bam)
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} _RG.bam`
+
+java -Xmx32g -jar ${gatk} -I ${base}_RG.bam \
+		-R /scratch/rajat/fc_WGS/fc_WGS/reference_indexed/dmel-all-chromosome-r6.39.fasta \
+ 		-T RealignerTargetCreator \
+  	    -o ${base}.intervals &
+done
+```
+FLAGS: "-I" = input files. "-R" = reference genome. "-T" = what operation to perform using the files. "-o" = output file.
+
+Next, Samtools was utilized to index the genome (Li et al. 2009).
+
+```{r}
+samtools faidx dmel-all-chromosome-r6.39.fasta.gz
+
+```
+
+Next GATK was used to realign around the indels.
+
+```{r}
+#!/bin/bash
+
+#Path to input directory
+final_bam=/2/scratch/Katie/WingShapeBSA/mapped/bwa/BAM_files/merge/
+
+#Path to output directory
+gatk_dir=/2/scratch/Katie/WingShapeBSA/mapped/bwa/BAM_files/merge/gatkindel/
+
+#Variable for reference genome (non-zipped)
+ref_genome=/scratch/rajat/fc_WGS/reference_indexed/dmel-all-chromosome-r6.39.fasta
+
+#Path to GATK
+gatk=/usr/local/gatk/GenomeAnalysisTK.jar
+
+
+files=(${final_bam}/*_RG.bam)
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} _RG.bam`
+
+java -Xmx32g -jar ${gatk} -I ${final_bam}/${base}_RG.bam -R ${ref_genome} \
+  -T IndelRealigner -targetIntervals ${gatk_dir}/${base}.intervals \
+  -o ${gatk_dir}/${base}_realigned.bam
+
+done
+```
+Flags: "-I" = input files. "-R" = reference genome. "-T" = what operation to perform with the files. "-o" = output file.
+
+###8.Deduping
+
+Next, all PCR duplicates were to be removed from the data. Duplicated sequences can inflate the allele counts, as they don't represent any uniqueness in the allele data. Picard was used to accomplish deduping.
+
+```{r}
+#! /bin/bash
+
+mapped_dir=/scratch/rajat/fc_WGS/indelrealigned/
+outdir=/scratch/rajat/fc_WGS/rmd_dir
+picdir=/usr/local/picard-tools/picard.jar
+
+files=(${mapped_dir}/*.bam)
+
+for file in ${files[@]}
+do
+name=${file}
+base=`basename ${name} .bam`
+#echo ${name}
+java -Xmx2g -jar ${picdir} MarkDuplicates I=${mapped_dir}/${base}.bam O=${outdir}/${base}_rmd.bam M=${outdir}/${base}_dupstat.txt VALIDATION_STRINGENCY=SILENT REMOVE_DUPLICATES=true
+done
+```
+
+Flags: "-I" = input files. "-R" = reference genome. "-O" = output file. "-M" = log file. "VALIDATION_STRINGENCY" = SILENT: Apparently this needs to be set to silent for picard to run. "REMOVE_DUPLICATES" = true; removes duplicates from files.
+
+There was an error in trying to dedupe all of the files consecutively by executing a single script,as the files kept getting corrupt for some reason (requiring me to retrace my steps to earlier in the pipeline). Hence, I just created a single script file for each of the indel realigned files, and had them run in parallel using the screen function.
+
+###9. Creating mpileup and sync files
+A single mpileup file was created for each experiment to be used for later analysis.
+
+```{r}
+#! /bin/bash
+
+mapped_dir=/scratch/Rajat/fc_WGS/rmd_dir
+picdir=/usr/local/picard-tools/picard.jar
+genome=/scratch/rajat/dmel_r6.39/fc_WGS/reference_indexed/dmel-all-chromosome-r6.39.fasta
+out_dir=/scratch/Rajat/fc_WGS/mpileup_dir/
+
+files=(${mapped_dir}/*_rmd.bam)
+for file in ${files[@]}
+do
+#echo ${files[@]}
+name=${file}
+base=`basename ${name} _rmd.bam`
+#echo ${base}
+samtools mpileup -B -Q 0 -f ${genome} ${base}_rmd.bam > ${out_dir}/${base}.mpileup &
+done
+Flags: "-B" = disable base quality alignment, as we've already done a lot of base quality alignment checks. "-Q" = sets the minimum quality to 0, as we've already checked this many times. "-f" = fasta reference file.
+```
+For mpileup, I needed to separate the files into sub-directories in rmd_dir based n experiment, and then run a separate mpileup script for each experiment in parallel. 
+
+A sync file was created for each mpileup file, in the same directory as the mpileup file. 
+
+```{r}
+java -Xmx32g -jar /home/rajat/popoolation-code/mpileup2sync.jar --input A.mpileup --output A.sync
+```
+Next, analysis of the samples occurred. 
+
+###11. Popoolation Analysis 
+
+PoPoolation is a population genetics tool that tabulates population parameters within populations of pool sequencing data (Kofler et al. 2011a). It was used to tabulate "Tiajama's pi" here. General trends were of interest here, so I opted to use large windows to calculate this value across the genome. However, as I'll discuss later on, perhaps this was not the best decision.
+
+```{r}
+
+#/bin/bash
+
+#Path to PoPoolation
+pi=/home/rajat/popoolation-code/Variance-sliding.pl
+
+# Path to input directory
+input=/home/rajat/fc_WGS/mpileup_dir/mutant/
+
+# Path to output Tajima Pi files
+output=/home/rajat/fc_WGS/Pi_dir
+
+files=(${input}/A_mpileup)
+
+for file in ${files[@]}
+
+do
+
+name=${file}
+
+base=`basename ${name} _mpileup`
+
+perl ${pi} \
+        --input ${input}/${base}_mpileup \
+        --output ${output}/${base}.pi \
+        --measure pi \
+        --window-size 1000 \
+        --step-size 1000 \
+        --min-count 2 \
+        --min-coverage 4 \
+        --max-coverage 250 \
+        --min-qual 20 \
+        --pool-size 150 \
+        --fastq-type sanger \
+        --snp-output ${output}/${base}.snps \
+        --min-covered-fraction 0.5
+
+done 
+```
+This was then visualized using the following script:
+
+```{r}
+library(tidyverse)
+
+dat <- read.table("A.pi")
+colnames(dat) <- c('chr', 'window', 'windowCount', ' propInwindow', 'Pi')
+
+##Taking out the NAs
+dat <- dat[-which(dat$Pi=="na"),]
+
+
+##cleaning to only keep what is pertinent to my interest
+datX <- subset(dat, chr == "X")
+a <- dim(datX)[1]
+datX$number <- 1:a
+
+
+dat2L <- subset(dat, chr == "2L")
+b <- dim(dat2L)[1]
+dat2L$number <- (a+1):(a+b)
+
+dat2R <- subset(dat, chr == "2R")
+c <- dim(dat2R)[1]
+dat2R$number <- (a+b+1):(a+b+c)
+
+dat3L <- subset(dat, chr == "3L")
+d <- dim(dat3L)[1]
+dat3L$number <- (a+b+c+1):(a+b+c+d)
+
+dat3R <- subset(dat, chr == "3R")
+e <- dim(dat3R)[1]
+dat3R$number <- (a+b+c+d+1):(a+b+c+d+e)
+
+dat4 <- subset(dat, chr == "4")
+f <- dim(dat4)[1]
+dat4$number <- (a+b+c+d+e+1):(a+b+c+d+e+f)
+
+##adding the all together 
+dat2 <- rbind(datX, dat2L, dat2R, dat3L, dat3R, dat4)
+
+##making Pi numeric 
+dat2$Pi=as.numeric(levels(dat2$Pi))[dat2$Pi]
+
+
+plot1 <- ggplot(dat2, aes(x = number, y= Pi, colour = chr))+
+  geom_point(size=0.3, show.legend = F) +
+  #scale_y_continuous(limits=c(0, 0.02), breaks=seq(0, 0.02, 0.005)) + 
+  xlab("") +
+  scale_x_discrete(limits=factor(c(a, a+b, a+b+c, a+b+c+d, a+b+c+d+e, a+b+e+c+d+e+f)), labels = c("X", "2L", '2R', '3L', '3R', "4")) +
+  theme(text = element_text(size=20), 
+        axis.text.x= element_text(size=15), axis.text.y= element_text(size=15)) +
+  scale_colour_manual(values=c("#56B4E9", "#E69F00", 'grey30', 'grey46', 'wheat3', 'lemonchiffon4'))
+
+png("popoolation1",width=1060,height=412,units="px")
+plot1
+dev.off()
+```
+
+For some reason the plot failed to appear unfortunately, despite several efforts to adjust the code, so I'll have to look into this further to rectify the error.I've narrowed down the problem to the part where the NAs were removed. After this code was run, a data frame with dimensions of 0 by 0 was formed for some reason. I'll have to figure out a different way to remove NAs.
+###12 Popoolation 2 Analysis 
+
+PoPoolation2 was used to calculate Fst values. These would be the easiest to compare between the wild population and artificial selection experiments given the insight of Kofler et al. (2011b).
+
+First, FST was calculated. This involved making pair-wise comparisons in a single sync file.
+
+```{r}
+perl /home/rajat/popoolation2-code/fst-sliding.pl \
+--input /scratch/rajat/fc_WGS/mpileup_dir \
+                                --output /scratch/rajat/fc_WGS/fst_dir/A.fst \
+                                --suppress-noninformative \
+                                --min-count 2 \
+                                --min-coverage 10 \
+                                --max-coverage 300 \
+                                --min-covered-fraction 1 \
+                                --window-size 50 \
+                                --step-size 50 \
+                                --pool-size 150
+
+```
+
+In hindsight, the window size could have been made larger given the 20 generations in the artificial selection experiments, and this is something I may have to do later on.
+
+A single Fst file was used to generate an igv file, in order to get headings for the file and be able to see what each column represented.
+
+
+## R Markdown
+```{r}
+perl <popoolation2-code>/export/pwc2igv.pl --input p1_p2.fst --output p1_p2.igv
+```
+
+Then I needed to parse out the comparisons that I was interested in from the Fst files. Population numbers were assigned based on the alphabetical order that they were listed in when the mpileup was generated.
+
+```{r}
+#Each line was run in the directory with the fst file. 
+#A  UPvDN
+awk '{print $1, $2, $3, $4, $5, $6}' A_fst > UPvDN_A.fst
+
+#A UPvsCTRL
+awk '{print $1, $2, $3, $4, $5, $8}' A_fst > UPvCTRL_A.fst
+
+#A UPvsCTRL
+awk '{print $1, $2, $3, $4, $5, $7}' A_fst > DNvCTRL_A.fst
+
+#B  UPvDN
+awk '{print $1, $2, $3, $4, $5, $6}' B_fst > UPvDN_B.fst
+
+#B UPvsCTRL
+awk '{print $1, $2, $3, $4, $5, $8}' B_fst > UPvCTRL_B.fst
+
+#B UPvsCTRL
+awk '{print $1, $2, $3, $4, $5, $7}' B_fst > DNvCTRL_B.fst
+#C  UPvDN
+awk '{print $1, $2, $3, $4, $5, $6}' C_fst > UPvDN_C.fst
+
+#C UPvsCTRL
+awk '{print $1, $2, $3, $4, $5, $8}' C_fst > UPvCTRL_C.fst
+
+#C UPvsCTRL
+awk '{print $1, $2, $3, $4, $5, $7}' C_fst > DNvCTRL_C.fst
+
+```
+
+The whole genome was then visualized using the following script:
+
+```{r}
+library (data.table)
+library(ggplot2)
+
+ddat<-fread("UPvCTRLgatkA.fst")
+ddat
+ccol <-ncol(ddat)
+ccol
+#cleans up col to get only the fst value
+for (i in 6:ccol){
+  ddat[[i]] <- gsub(".*=","", ddat[[i]])
+}
+
+
+#to change the columns to numeric 
+for (i in 6:ccol){
+  ddat[[i]] <- as.numeric(ddat[[i]])
+}
+
+#cal mean Fst for all comparisons. 
+ddat$meanFst <- rowMeans(subset(ddat, select = c(6:ccol)), na.rm = TRUE)
+
+ddat <- ddat[ddat$meanFst!='NaN',]
+
+ncol(ddat)
+#choose the last column for the fst mean
+
+ddat
+ddat <- ddat[,c(1,2,3,4,5,7)]
+ddat
+
+colnames(ddat) <- c('chr', 'window', "num", 'frac', 'meanCov','meanFst')
+ddat
+
+##need to select only the chromosomes
+ddat2L <- ddat[which(ddat$chr=='2L'),]
+ddat22R <- ddat[which(ddat$chr=='2R'),]
+ddat23L <- ddat[which(ddat$chr=='3L'),]
+ddat23R <- ddat[which(ddat$chr=='3R'),]
+ddat24 <- ddat[which(ddat$chr=='4'),]
+ddat2X <- ddat[which(ddat$chr=='X'),]
+ddat[1+l,]
+ddat <- rbind(ddat2X, ddat2L, ddat22R, ddat23L, ddat23R, ddat24)
+
+#this part below is to the order of the chromosomes to make a nice map going across the x-axis. 
+#I needed to check and see which order I had my chromosomes in by pulling out rows of data equal to the letters below. 
+#So I looked at ddat2[1,] then if the first value is on X I looked at ddat2[1 + l,]. This is how I chose the order of the chromosomes as you will see below.
+g <- nrow(ddat[which(ddat$chr=='2L'),])
+h <- nrow(ddat[which(ddat$chr=='2R'),])
+i <- nrow(ddat[which(ddat$chr=='3L'),])
+j <- nrow(ddat[which(ddat$chr=='3R'),])
+k <- nrow(ddat[which(ddat$chr=='4'),])
+l <- nrow(ddat[which(ddat$chr=='X'),])
+
+
+#NOTE: Changing Orders:
+#To change the order for X to be first:
+# Need to figure out the order the chromosomes are put in the data frame to give each the correct number in the sequence.
+
+
+
+#X-2L-2R-3L-3R-4
+ddat$number <-  c((1:l),
+                  (l+1):(l+g), 
+                  (l+g+1):(l+g+h), 
+                  (l+g+h+1):(l+g+h+i),
+                  (l+g+h+i+1):(l+g+h+i+j),
+                  (l+g+h+i+j+1):(l+g+h+i+j+k))
+
+### PLOTS:
+
+plt <-  ggplot(data = ddat, aes(x=number, y=meanFst, color=chr))
+plt2 <- plt + 
+  geom_point(size=0.5, show.legend = F) + 
+  theme(panel.background = element_blank()) +
+  scale_y_continuous(limits=c(0, 1), breaks=seq(0, 1, 0.1)) +
+  xlab("Chromosome") +
+  ylab(expression(F[ST])) +
+  scale_x_discrete(limits=factor(c(l/2, l+(g/2), (l+g+(h/2)), (l+g+h+(i/2)), (l+g+h+i+(j/2)), (l+g+h+i+j+(k/2)))), labels = c("X","2L", "2R", '3L', '3R', "4")) +
+  scale_colour_manual(values=c("#56B4E9", "#E69F00", 'grey30', 'grey46', 'wheat3', 'lemonchiffon4')) +
+  theme(text = element_text(size=20),
+        axis.text.x= element_text(size=15), 
+        axis.text.y= element_text(size=15))
+plt2
+png("UPvCTRLAgatk.png",width=1060,height=412,units="px")
+plt2 
+
+
+```
+All of the graphs from this have been uploaded to a clearly labelled directory on github, accompanying this report. As you can see, while the plots are visible, there is an issue with regards to the labeling of the x-axis. I'm not sure how to fix this at the moment. The graphs do make it clear that the data seems to be rather sporadic, and that perhaps a different approach like fpoolstat would be better to take (more on this in the discussion).
+
+
+#13 CRISP variant caller
+CRISP is a variant caller that is geared towards pool-seq data. Multiple pools of individuals are inputted, and then polymorphisms found between the pools are compared (Bansal et al. 2010).
+
+First, CRISP needed to be set up. A binary for CRISP was download, and was unpacked using the following command: "tar xvzf CRISP-122713.tar.gz"".This created a directory where the CRISP was executable.
+CRISP was run with the script below. This script was altered for each population, and is an example for a single population.
+```{r}
+
+#/bin/bash
+
+#Path to CRISP
+crisp=/home/rajat/CRISP-122713/CRISP
+
+#Variable for reference genome (non-zipped)
+ref_genome=/scratch/rajat/fc_WGS/reference_indexed/dmel-all-chromosome-r6.39.fasta
+
+#Path to .bam files from GATK
+input=scratch/rajat/fc_WGS/indel_realigned/A
+
+#Output
+output=/scratch/rajat/fc_WGS/CRISP_dir
+
+
+${crisp} --bams ${input}/*.bam \
+                        --ref ${ref_genome} \
+                        --poolsize 150 \
+                        --qvoffset 33 \
+                        --mbq 10 \
+                        --mmq 10 \
+                        --minc 2 \
+                        --VCF ${output}/*.vcf > ${output}/*.log
+
+done
+```
+###Discussion: 
+
+   While SNPs were identified using CRISP caller, the data is rather sporadic, as is discernable from the popoolation2-generated figures. There are two ways to try to correct this going forward. Either I can try to use larger window sizes while working with popoolation 2, as the current window size might not be large enough for the 20 generations of artificial selection here, or I can instead try working with an alternative program. Poolfstat is an alternative that can be used. It accounts for genetic drift better (Gautier, 2021) and would make the Fst plots cleaner, and thus this is the next step to be implemented.
+   In continuing to work with this pipline, repeatmasker is also something that should be incorporated. RepeatMasker takes FASTA format input, and detects transposable elements, satellites, and low-complexity DNA sequences (Tempel 2012). It’s a software that is most commonly used for the detection of repeated, transposable elements, and would be useful for the purpose of excluding additional polymorphisms that lead to false positives in identifying SNPs using CRISP. Masking is sometimes done on the entire reference genome, and sometimes it is done later on in the pipeline. It would be interesting to try performing both operations, to see if this has an effect on the number of SNPs that are derived at the end.In the same vein of thought, I would be interested in perhaps adding read group information earlier on as I decided would be better to do, and seeing if that made much of a difference.
+   In terms of SNP calling, alternatives to CRISP could potentially be explored as well. Wei et al (2011) developed SNVer for the analysis of pooled or individual NGS data. It analyzes common and rare variants in a single cohesive model. In Wei et al (2011)’s comparison of CRISP and SNVer in real data application, they found that both programs called 100 SNPs with 100% genotyping concordance. CRISP involves the computation of the P-value of many contingency tables in the Fisher’s exact test, and so its time efficiency is largely dependent on the number of pools created and the depth of coverage. These factors don’t have much of an impact of SNVer, and thus it would be a better alternative to CRISP for WGS analysis in terms of efficiency. SNVer reports a single overall significance P-value for each locus rather than the dichotomous decision to either accept or reject the candidate as a variant, as seen with CRISP. SNVer would certainly be worth investigating as an alternative SNP caller. 
+   Former graduate student Andrew Scott from the Dukas lab already used an RNA sequencing pipeline obtained from the Dworkin lab to identify SNPs and candidate genes from RNA material extracted during the forced copulation experiments. A future step would be to try to take a look at which identified genes are common between this DNA sequencing analysis and the RNA sequencing analysis conducted by Andrew Scott, to have a more robust way of selecting candidate genes that would be focal points for future experimentation.
+
+###References
+Bansal, V. (2010). A statistical method for the detection of variants from next-generation resequencing of DNA pools. Bioinformatics, 26(12), i318-i324.
+
+Baxter, C. M., Yan, J. L., & Dukas, R. (2019). Genetic variation in sexual aggression and the factors that determine forced copulation success. Animal Behaviour, 158, 261-267
+
+Bolger, A. M., Lohse, M., & Usadel, B. (2014). Trimmomatic: a flexible trimmer for Illumina sequence data. Bioinformatics, 30(15), 2114-2120.
+
+Brown, J., Pirrung, M., & McCue, L. A. (2017). FQC Dashboard: integrates FastQC results into a web-based, interactive, and extensible FASTQ quality control tool. Bioinformatics, 33(19), 3137-3139.
+
+Dukas, R., Yan, J. L., Scott, A. M., Sivaratnam, S., & Baxter, C. M. (2020). Artificial selection on sexual aggression: Correlated traits and possible trade‐offs. Evolution, 74(6), 1112-1123                                     .
+
+Gautier, M., Vitalis, R., Flori, L., & Estoup, A. (2021). f-statistics estimation and admixture graph construction with Pool-Seq or allele count data using the R package poolfstat. bioRxiv.
+
+Huang, H. W., Mullikin, J. C., & Hansen, N. F. (2015). Evaluation of variant detection software for pooled next-generation sequence data. BMC bioinformatics, 16(1), 1-9.
+
+Kofler, R., Orozco-terWengel, P., De Maio, N., Pandey, R. V., Nolte, V., Futschik, A., ... & Schlötterer, C. (2011a). PoPoolation: a toolbox for population genetic analysis of next generation sequencing data from pooled individuals. PloS one, 6(1), e15925.
+
+Kofler, R., Pandey, R. V., & Schlötterer, C. (2011b). PoPoolation2: identifying differentiation between populations using sequencing of pooled DNA samples (Pool-Seq). Bioinformatics, 27(24), 3435-3436.
+
+Kofler, R., Langmüller, A. M., Nouhaud, P., Otte, K. A., & Schlötterer, C. (2016). Suitability of different mapping algorithms for genome-wide polymorphism scans with pool-seq data. G3: Genes, Genomes, Genetics, 6(11), 3507-3515.
+
+Li, H., Handsaker, B., Wysoker, A., Fennell, T., Ruan, J., Homer, N., ... & Durbin, R. (2009). The sequence alignment/map format and SAMtools. Bioinformatics, 25(16), 2078-2079.
+
+Li, H., & Durbin, R. (2010). Fast and accurate long-read alignment with Burrows–Wheeler transform. Bioinformatics, 26(5), 589-595.
+
+Markow, T. A. (2000). Forced matings in natural populations of Drosophila. The American Naturalist, 156(1), 100-103.
+
+Rice, W. R., Stewart, A. D., Morrow, E. H., Linder, J. E., Orteiza, N., & Byrne, P. G. (2006). Assessing sexual conflict in the Drosophila melanogaster laboratory model system. Philosophical Transactions of the Royal Society B: Biological Sciences, 361(1466), 287-299
+
+Schlötterer, C., Tobler, R., Kofler, R., & Nolte, V. (2014). Sequencing pools of individuals—mining genome-wide polymorphism data without big funding. Nature Reviews Genetics, 15(11), 749-763.
+
+Thompson, M. E. (2009). 14 Human Rape: Revising Evolutionary Perspectives. In Sexual coercion in primates and humans (pp. 346-374). Harvard University Press                      
+
+Tempel, S. (2012). Using and understanding RepeatMasker. In Mobile genetic elements (pp. 29-51). Humana Press.Wei, Z., Wang, W., Hu, P., Lyon, G. J., & Hakonarson, H. (2011). SNVer: a statistical tool for variant calling in analysis of pooled or individual next-generation sequencing data. Nucleic acids research, 39(19), e132-e132.
+
+
